@@ -1,3 +1,4 @@
+
 # Ziggurat Distribution Scaffold
 
 The Ziggurat Distribution project template. Provides a Drupal 9 scaffold project
@@ -66,3 +67,4 @@ can use this template, follow the guide found here: [Ziggurat Contributor][]
 [npm]: https://www.npmjs.com
 [git]: https://git-scm.com/
 [Ziggurat Contributor]: docs/ziggurat-profile-development.md
+=======
