@@ -1,0 +1,470 @@
+diff --git a/src/Action/ViewsBulkOperationsMessageInterface.php b/src/Action/ViewsBulkOperationsMessageInterface.php
+new file mode 100644
+index 0000000000000000000000000000000000000000..2ab6ea4ee6e21de034b3575b4bd312ce6c00d621
+--- /dev/null
++++ b/src/Action/ViewsBulkOperationsMessageInterface.php
+@@ -0,0 +1,46 @@
++<?php
++
++namespace Drupal\views_bulk_operations\Action;
++
++use Drupal\Core\StringTranslation\TranslatableMarkup;
++
++/**
++ * Defines methods for an action that overrides the finished messaging.
++ *
++ * @see ViewsBulkOperationsFinishDetailsTestAction
++ */
++interface ViewsBulkOperationsMessageInterface {
++
++  /**
++   * Name of the message override method.
++   */
++  const METHOD_NAME = 'getFinishedMessage';
++
++  /**
++   * Name of the drush message override method.
++   */
++  const DRUSH_METHOD_NAME = 'getDrushFinishMessage';
++
++  /**
++   * Overrides the finished message.
++   *
++   * @param $details
++   *   The result operation details.
++   *
++   * @return \Drupal\Core\StringTranslation\TranslatableMarkup|null
++   *   Return a message, or NULL to suppress messaging.
++   */
++  public static function getFinishedMessage($details): ?TranslatableMarkup;
++
++  /**
++   * Overrides the drush finished method.
++   *
++   * @param $details
++   *   The result operation details.
++   *
++   * @return \Drupal\Core\StringTranslation\TranslatableMarkup
++   *   The drush finished message.
++   */
++  public static function getDrushFinishMessage($details): TranslatableMarkup;
++
++}
+\ No newline at end of file
+diff --git a/src/Commands/ViewsBulkOperationsCommands.php b/src/Commands/ViewsBulkOperationsCommands.php
+index 523557289501aebfa954dcd49b7a54aa0b97d00d..447c2313da23086287928d05db405dd3038fdc3b 100644
+--- a/src/Commands/ViewsBulkOperationsCommands.php
++++ b/src/Commands/ViewsBulkOperationsCommands.php
+@@ -209,6 +209,7 @@ class ViewsBulkOperationsCommands extends DrushCommands {
+     do {
+       $context['finished'] = 1;
+       $context['message'] = '';
++      $context['drush'] = TRUE;
+       ViewsBulkOperationsBatch::operation($vbo_data, $context);
+       if (!empty($context['message'])) {
+         $this->logger->info($context['message']);
+@@ -230,7 +231,19 @@ class ViewsBulkOperationsCommands extends DrushCommands {
+       $this->logger->info($this->t('Execution time: @time ms.', ['@time' => $this->timer($options['verbose'], 'execute')]));
+     }
+
+-    return $this->t('Action processing results: @results.', ['@results' => implode(', ', $details)]);
++    // Check if the details messaging is overridden.
++    if (
++      isset($context['results'])
++      && array_key_exists(ViewsBulkOperationsBatch::FINISHED_DETAILS_CALLBACK_KEY, $context['results'])
++      && is_callable($context['results'][ViewsBulkOperationsBatch::FINISHED_DETAILS_CALLBACK_KEY])
++    ) {
++      return call_user_func(
++        $context['results'][ViewsBulkOperationsBatch::FINISHED_DETAILS_CALLBACK_KEY],
++        $details
++      );
++    } else {
++      return $this->t('Action processing results: @results.', ['@results' => implode(', ', $details)]);
++    }
+   }
+
+   /**
+diff --git a/src/Service/ViewsBulkOperationsActionProcessor.php b/src/Service/ViewsBulkOperationsActionProcessor.php
+index c40294a84a2bb3793607f56732ed42b5a775cdbb..3404ba08b8d6ea2a3bfb145385bb2a6abf02255a 100644
+--- a/src/Service/ViewsBulkOperationsActionProcessor.php
++++ b/src/Service/ViewsBulkOperationsActionProcessor.php
+@@ -7,6 +7,7 @@ use Drupal\Core\Session\AccountProxyInterface;
+ use Drupal\Core\Extension\ModuleHandlerInterface;
+ use Drupal\Core\StringTranslation\StringTranslationTrait;
+ use Drupal\Core\Entity\EntityInterface;
++use Drupal\views_bulk_operations\Action\ViewsBulkOperationsMessageInterface;
+ use Drupal\views_bulk_operations\ViewsBulkOperationsBatch;
+
+ /**
+@@ -495,8 +496,49 @@ class ViewsBulkOperationsActionProcessor implements ViewsBulkOperationsActionPro
+       foreach ($batch_results as $result) {
+         $results['operations'][] = (string) $result;
+       }
++      // Check for message override.
++      if ($this->doActionMessage()) {
++        $results[ViewsBulkOperationsBatch::FINISHED_DETAILS_CALLBACK_KEY]
++          = $this->getActionMessageCallable();
++      }
+       ViewsBulkOperationsBatch::finished(TRUE, $results, []);
+     }
+   }
+
++  /**
++   * {@inheritdoc}
++   */
++  public function doActionMessage(): bool {
++    if (!$this->initialized || !isset($this->action)) {
++      return FALSE;
++    }
++    return $this->action instanceof ViewsBulkOperationsMessageInterface;
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function getActionMessageCallable(): ?callable {
++    if (!$this->doActionMessage()) {
++      return NULL;
++    }
++    return [
++      get_class($this->action),
++      ViewsBulkOperationsMessageInterface::METHOD_NAME
++    ];
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function getActionDrushMessageCallable(): ?callable {
++    if (!$this->doActionMessage()) {
++      return NULL;
++    }
++    return [
++      get_class($this->action),
++      ViewsBulkOperationsMessageInterface::DRUSH_METHOD_NAME
++    ];
++  }
++
+ }
+diff --git a/src/Service/ViewsBulkOperationsActionProcessorInterface.php b/src/Service/ViewsBulkOperationsActionProcessorInterface.php
+index f3312cb421e915683ab968a260ea91c1a116997e..4a9b9a9ed529ec64b964031d2a4ba74b7f429191 100644
+--- a/src/Service/ViewsBulkOperationsActionProcessorInterface.php
++++ b/src/Service/ViewsBulkOperationsActionProcessorInterface.php
+@@ -64,4 +64,28 @@ interface ViewsBulkOperationsActionProcessorInterface {
+    */
+   public function executeProcessing(array &$data, $view = NULL);
+
++  /**
++   * If an action exists and is an action type that will override message.
++   *
++   * @return bool
++   *   Does this action override messaging?
++   */
++  public function doActionMessage(): bool;
++
++  /**
++   * Gets the action message callable.
++   *
++   * @return callable|null
++   *   The action callable or null.
++   */
++  public function getActionMessageCallable(): ?callable;
++
++  /**
++   * Gets the action drush message callable.
++   *
++   * @return callable|null
++   *   The action callable or null.
++   */
++  public function getActionDrushMessageCallable(): ?callable;
++
+ }
+diff --git a/src/ViewsBulkOperationsBatch.php b/src/ViewsBulkOperationsBatch.php
+index 97356a16fa3cac36b3a57cfb060fb4e2ef666d6f..5942f7015ad93387b08feb851f91b02a43ded63f 100644
+--- a/src/ViewsBulkOperationsBatch.php
++++ b/src/ViewsBulkOperationsBatch.php
+@@ -10,6 +10,11 @@ use Symfony\Component\HttpFoundation\RedirectResponse;
+  */
+ class ViewsBulkOperationsBatch {
+
++  /**
++   * Value of the finished details callback override key.
++   */
++  const FINISHED_DETAILS_CALLBACK_KEY = 'finished_details_callback';
++
+   /**
+    * Translation function wrapper.
+    *
+@@ -139,6 +144,16 @@ class ViewsBulkOperationsBatch {
+         '@total' => $context['sandbox']['total'],
+       ]);
+     }
++    if ($actionProcessor->doActionMessage()) {
++      if (isset($context['drush'])) {
++        $context['results'][static::FINISHED_DETAILS_CALLBACK_KEY]
++          = $actionProcessor->getActionDrushMessageCallable();
++      }
++      else {
++        $context['results'][static::FINISHED_DETAILS_CALLBACK_KEY]
++          = $actionProcessor->getActionMessageCallable();
++      }
++    }
+   }
+
+   /**
+@@ -158,10 +173,22 @@ class ViewsBulkOperationsBatch {
+       foreach ($operations as $op => $count) {
+         $details[] = $op . ' (' . $count . ')';
+       }
+-      $message = static::t('Action processing results: @operations.', [
+-        '@operations' => implode(', ', $details),
+-      ]);
+-      static::message($message);
++      // Check if the details placeholder messaging is overridden, and
++      // validate the placeholder callback.
++      if (
++        array_key_exists(self::FINISHED_DETAILS_CALLBACK_KEY, $results)
++        && is_callable($results[self::FINISHED_DETAILS_CALLBACK_KEY])
++      ) {
++        $message = call_user_func($results[self::FINISHED_DETAILS_CALLBACK_KEY], $details);
++      }
++      else {
++        $message = static::t('Action processing results: @operations.', [
++          '@operations' => implode(', ', $details),
++        ]);
++      }
++      if (!empty($message)) {
++        static::message($message);
++      }
+       if (isset($results['redirect_url'])) {
+         return new RedirectResponse($results['redirect_url']->setAbsolute()->toString());
+       }
+diff --git a/tests/src/Kernel/ViewsBulkOperationsActionProcessorTest.php b/tests/src/Kernel/ViewsBulkOperationsActionProcessorTest.php
+index 7f250106df2c24454288d76dd6c155d68d447739..fc8164468a88f41816d8013fec8170f66ead8cbe 100644
+--- a/tests/src/Kernel/ViewsBulkOperationsActionProcessorTest.php
++++ b/tests/src/Kernel/ViewsBulkOperationsActionProcessorTest.php
+@@ -11,7 +11,7 @@ class ViewsBulkOperationsActionProcessorTest extends ViewsBulkOperationsKernelTe
+   /**
+    * {@inheritdoc}
+    */
+-  public function setUp() {
++  public function setUp(): void {
+     parent::setUp();
+
+     $this->createTestNodes([
+@@ -133,4 +133,31 @@ class ViewsBulkOperationsActionProcessorTest extends ViewsBulkOperationsKernelTe
+     $this->assertNodeStatuses($vbo_data['list'], $vbo_data['exclude_mode']);
+   }
+
++  /**
++   * Tests plugin that set details message override.
++   *
++   * @covers ::getPageList
++   * @covers ::populateQueue
++   * @covers ::process
++   */
++  public function testViewsBulkOperationsActionProcessorMessageOverrides(): void {
++    $testActionResult = 'Test Action';
++    $vbo_data = [
++      'view_id' => 'views_bulk_operations_test',
++      'action_id' => 'views_bulk_operations_details_test_action',
++    ];
++
++    $results = $this->executeAction($vbo_data);
++
++    $this->assertEquals(20, $results['operations'][$testActionResult]);
++    $details = [];
++    foreach ($results['operations'] as $op => $count) {
++      $details[] = $op . ' (' . $count . ')';
++    }
++    $this->assertEquals(
++      "Details override: $testActionResult (20).",
++      call_user_func($results['message_override'], $details)
++    );
++  }
++
+ }
+diff --git a/tests/src/Kernel/ViewsBulkOperationsKernelTestBase.php b/tests/src/Kernel/ViewsBulkOperationsKernelTestBase.php
+index 032e3a45cc72c81adcda62fc8d57a4682d906922..e772413b3af8a190f1062e21d0e7cc4ca6c72626 100644
+--- a/tests/src/Kernel/ViewsBulkOperationsKernelTestBase.php
++++ b/tests/src/Kernel/ViewsBulkOperationsKernelTestBase.php
+@@ -292,6 +292,13 @@ abstract class ViewsBulkOperationsKernelTestBase extends KernelTestBase {
+       if (!empty($context['message'])) {
+         $summary['messages'][] = (string) $context['message'];
+       }
++      if (
++        !empty($context['results'])
++        && !empty($context['results'][ViewsBulkOperationsBatch::FINISHED_DETAILS_CALLBACK_KEY])
++      ) {
++        $summary['message_override']
++          = $context['results'][ViewsBulkOperationsBatch::FINISHED_DETAILS_CALLBACK_KEY];
++      }
+     } while ($context['finished'] < 1);
+
+     // Add information to the summary array.
+diff --git a/tests/src/Unit/TestViewsBulkOperationsBatch.php b/tests/src/Unit/TestViewsBulkOperationsBatch.php
+index cbf30569b30c26822ab91755c749dfc8cad6f599..c7973430e3ed30e34e064a722c911635279daebd 100644
+--- a/tests/src/Unit/TestViewsBulkOperationsBatch.php
++++ b/tests/src/Unit/TestViewsBulkOperationsBatch.php
+@@ -26,6 +26,11 @@ class TestViewsBulkOperationsBatch extends ViewsBulkOperationsBatch {
+       $storage = NULL;
+       return $output;
+     }
++    elseif ($message === NULL) {
++      // Message was never called, as we do not call ::message(NULL) outside
++      // of testing.
++      return NULL;
++    }
+     else {
+       $storage = (string) $message;
+     }
+diff --git a/tests/src/Unit/ViewsBulkOperationsBatchTest.php b/tests/src/Unit/ViewsBulkOperationsBatchTest.php
+index 3ba5a30b802a27a6f0ef8629262a4385fb2aa91a..bc4c8683324723b6ec55fba2ee6b65c4635df525 100644
+--- a/tests/src/Unit/ViewsBulkOperationsBatchTest.php
++++ b/tests/src/Unit/ViewsBulkOperationsBatchTest.php
+@@ -12,17 +12,10 @@ use Drupal\views\Entity\View;
+  */
+ class ViewsBulkOperationsBatchTest extends UnitTestCase {
+
+-  /**
+-   * Modules to install.
+-   *
+-   * @var array
+-   */
+-  public static $modules = ['node'];
+-
+   /**
+    * {@inheritdoc}
+    */
+-  protected function setUp() {
++  protected function setUp(): void {
+     parent::setUp();
+
+     $this->container = new ContainerBuilder();
+@@ -157,6 +150,34 @@ class ViewsBulkOperationsBatchTest extends UnitTestCase {
+     $results = ['operations' => ['Some operation1', 'Some operation2']];
+     TestViewsBulkOperationsBatch::finished(TRUE, $results, []);
+     $this->assertEquals(TestViewsBulkOperationsBatch::message(), 'Action processing results: Some operation1 (1), Some operation2 (1).');
++
++    $messageCallback = function ($details) {
++      return str_replace(
++        '@operations',
++        implode(', ', $details),
++        'Detail override: @operations.'
++      );
++    };
++    $results = [
++      'finished_details_callback' => $messageCallback,
++      'operations' => ['Some operation', 'Some operation'],
++    ];
++    TestViewsBulkOperationsBatch::finished(TRUE, $results, []);
++    $this->assertEquals(TestViewsBulkOperationsBatch::message(), 'Detail override: Some operation (2).');
++
++    $results = [
++      'finished_details_callback' => 'Detail override: @invalid',
++      'operations' => ['Some operation', 'Some operation'],
++    ];
++    TestViewsBulkOperationsBatch::finished(TRUE, $results, []);
++    $this->assertEquals(TestViewsBulkOperationsBatch::message(), 'Action processing results: Some operation (2).');
++
++    $results = [
++      'finished_details_callback' => function () { return NULL; },
++      'operations' => ['Some operation', 'Some operation'],
++    ];
++    TestViewsBulkOperationsBatch::finished(TRUE, $results, []);
++    $this->assertNull(TestViewsBulkOperationsBatch::message());
+   }
+
+ }
+diff --git a/tests/views_bulk_operations_test/src/Plugin/Action/ViewsBulkOperationsFinishDetailsTestAction.php b/tests/views_bulk_operations_test/src/Plugin/Action/ViewsBulkOperationsFinishDetailsTestAction.php
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a16c7742d6a15cd653ee9a7015fa54f138e1c78
+--- /dev/null
++++ b/tests/views_bulk_operations_test/src/Plugin/Action/ViewsBulkOperationsFinishDetailsTestAction.php
+@@ -0,0 +1,86 @@
++<?php
++
++namespace Drupal\views_bulk_operations_test\Plugin\Action;
++
++use Drupal\Core\StringTranslation\TranslatableMarkup;
++use Drupal\views_bulk_operations\Action\ViewsBulkOperationsActionBase;
++use Drupal\Core\Session\AccountInterface;
++use Drupal\views_bulk_operations\Action\ViewsBulkOperationsMessageInterface;
++
++/**
++ * Action for test purposes only.
++ *
++ * This action demonstrates overriding the details placeholder messaging,
++ * this action messaging will be used in multiple places such as drush output.
++ * To suppress message just return `NULL` this cannot and should not be done
++ * for drush.
++ *
++ * @Action(
++ *   id = "views_bulk_operations_details_test_action",
++ *   label = @Translation("VBO details test action"),
++ *   type = "node"
++ * )
++ */
++class ViewsBulkOperationsFinishDetailsTestAction extends ViewsBulkOperationsActionBase implements ViewsBulkOperationsMessageInterface {
++
++  /**
++   * {@inheritdoc}
++   */
++  public function setContext(array &$context) {
++    $this->context['sandbox'] = &$context['sandbox'];
++    $this->context['results'] = &$context['results'];
++    foreach ($context as $key => $item) {
++      if ($key === 'sandbox' || $key === 'results') {
++        continue;
++      }
++      $this->context[$key] = $item;
++    }
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function executeMultiple(array $nodes) {
++    $results = [];
++    foreach ($nodes as $node) {
++      $results[] = $this->execute($node);
++    }
++    return $results;
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public static function getFinishedMessage($details): TranslatableMarkup {
++    return \Drupal::translation()->translate(
++      'Details override: @operations.',
++      ['@operations' => implode(', ', $details)]
++    );
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public static function getDrushFinishMessage($details): TranslatableMarkup {
++    // This is the default drush messaging.
++    return \Drupal::translation()->translate(
++      'Action processing results: @results.',
++      ['@results' => implode(', ', $details)]
++    );
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function execute($entity = NULL) {
++    return 'Test Action';
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function access($object, AccountInterface $account = NULL, $return_as_object = FALSE) {
++    return TRUE;
++  }
++
++}

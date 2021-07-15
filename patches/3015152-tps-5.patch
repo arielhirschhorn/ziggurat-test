@@ -1,0 +1,191 @@
+diff --git a/core/modules/layout_builder/config/schema/layout_builder.schema.yml b/core/modules/layout_builder/config/schema/layout_builder.schema.yml
+index f9f2ee8e9e..2f99a4a191 100644
+--- a/core/modules/layout_builder/config/schema/layout_builder.schema.yml
++++ b/core/modules/layout_builder/config/schema/layout_builder.schema.yml
+@@ -52,6 +52,11 @@ layout_builder.component:
+     additional:
+       type: ignore
+       label: 'Additional data'
++    third_party_settings:
++      type: sequence
++      label: 'Third party settings'
++      sequence:
++        type: ignore
+
+ inline_block:
+   type: block_settings
+diff --git a/core/modules/layout_builder/src/SectionComponent.php b/core/modules/layout_builder/src/SectionComponent.php
+index 4937f7fbcd..3507da19c7 100644
+--- a/core/modules/layout_builder/src/SectionComponent.php
++++ b/core/modules/layout_builder/src/SectionComponent.php
+@@ -3,6 +3,7 @@
+ namespace Drupal\layout_builder;
+
+ use Drupal\Component\Plugin\Exception\PluginException;
++use Drupal\Core\Config\Entity\ThirdPartySettingsInterface;
+ use Drupal\Core\Plugin\ContextAwarePluginInterface;
+ use Drupal\layout_builder\Event\SectionComponentBuildRenderArrayEvent;
+
+@@ -28,7 +29,7 @@
+  * @todo Determine whether an interface will be provided for this in
+  *   https://www.drupal.org/project/drupal/issues/2930334.
+  */
+-class SectionComponent {
++class SectionComponent implements ThirdPartySettingsInterface {
+
+   /**
+    * The UUID of the component.
+@@ -65,6 +66,22 @@ class SectionComponent {
+    */
+   protected $additional = [];
+
++  /**
++   * Third party settings.
++   *
++   * An array of key/value pairs keyed by provider.
++   *
++   * @var array[]
++   */
++  protected $thirdPartySettings = [];
++
++  /**
++   * The third party settings module key for the legacy 'additional' property.
++   *
++   * @var string
++   */
++  private $legacyAdditionalModuleKey = '_layout_builder';
++
+   /**
+    * Constructs a new SectionComponent.
+    *
+@@ -76,12 +93,17 @@ class SectionComponent {
+    *   The plugin configuration.
+    * @param mixed[] $additional
+    *   An additional values.
++   * @param array[] $third_party_settings
++   *   (optional) Any third party settings.
+    */
+-  public function __construct($uuid, $region, array $configuration = [], array $additional = []) {
++  public function __construct($uuid, $region, array $configuration = [], array $additional = [], array $third_party_settings = []) {
+     $this->uuid = $uuid;
+     $this->region = $region;
+     $this->configuration = $configuration;
+-    $this->additional = $additional;
++    if ($additional) {
++      $third_party_settings[$this->legacyAdditionalModuleKey] = $additional;
++    }
++    $this->thirdPartySettings = $third_party_settings;
+   }
+
+   /**
+@@ -117,7 +139,7 @@ public function get($property) {
+       $value = isset($this->{$property}) ? $this->{$property} : NULL;
+     }
+     else {
+-      $value = isset($this->additional[$property]) ? $this->additional[$property] : NULL;
++      $value = $this->getThirdPartySetting($this->legacyAdditionalModuleKey, $property);
+     }
+     return $value;
+   }
+@@ -137,7 +159,8 @@ public function set($property, $value) {
+       $this->{$property} = $value;
+     }
+     else {
+-      $this->additional[$property] = $value;
++      @trigger_error('Additional component properties should set via ::setThirdPartySetting().', E_USER_DEPRECATED);
++      $this->setThirdPartySetting($this->legacyAdditionalModuleKey, $property, $value);
+     }
+     return $this;
+   }
+@@ -302,8 +325,9 @@ public function toArray() {
+       'uuid' => $this->getUuid(),
+       'region' => $this->getRegion(),
+       'configuration' => $this->getConfiguration(),
+-      'additional' => $this->additional,
++      'additional' => $this->getThirdPartysettings($this->legacyAdditionalModuleKey),
+       'weight' => $this->getWeight(),
++      'third_party_settings' => $this->thirdPartySettings,
+     ];
+   }
+
+@@ -319,12 +343,66 @@ public function toArray() {
+    *   The section component object.
+    */
+   public static function fromArray(array $component) {
++    // Ensure expected array keys are present.
++    $component += [
++      'uuid' => '',
++      'region' => [],
++      'configuration' => [],
++      'additional' => [],
++      'third_party_settings' => [],
++    ];
+     return (new static(
+       $component['uuid'],
+       $component['region'],
+       $component['configuration'],
+-      $component['additional']
++      $component['additional'],
++      $component['third_party_settings']
+     ))->setWeight($component['weight']);
+   }
+
++  /**
++   * {@inheritdoc}
++   */
++  public function getThirdPartySetting($provider, $key, $default = NULL) {
++    return isset($this->thirdPartySettings[$provider][$key]) ? $this->thirdPartySettings[$provider][$key] : $default;
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function getThirdPartySettings($provider) {
++    return isset($this->thirdPartySettings[$provider]) ? $this->thirdPartySettings[$provider] : [];
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function setThirdPartySetting($provider, $key, $value) {
++    $this->thirdPartySettings[$provider][$key] = $value;
++    return $this;
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function unsetThirdPartySetting($provider, $key) {
++    unset($this->thirdPartySettings[$provider][$key]);
++    // If the third party is no longer storing any information, completely
++    // remove the array holding the settings for this provider.
++    if (empty($this->thirdPartySettings[$provider])) {
++      unset($this->thirdPartySettings[$provider]);
++    }
++    return $this;
++  }
++
++  /**
++   * Gets the list of third parties that store information.
++   *
++   * @return array
++   *   The list of third parties.
++   */
++  public function getThirdPartyProviders() {
++    return array_diff(array_keys($this->thirdPartySettings), [$this->legacyAdditionalModuleKey]);
++  }
++
+ }
+diff --git a/core/modules/layout_builder/tests/src/Kernel/DefaultsSectionStorageTest.php b/core/modules/layout_builder/tests/src/Kernel/DefaultsSectionStorageTest.php
+index 637da29947..150da5d682 100644
+--- a/core/modules/layout_builder/tests/src/Kernel/DefaultsSectionStorageTest.php
++++ b/core/modules/layout_builder/tests/src/Kernel/DefaultsSectionStorageTest.php
+@@ -107,7 +107,7 @@ public function providerTestAccess() {
+         'layout_onecol',
+         [],
+         [
+-          'first-uuid' => new SectionComponent('first-uuid', 'content', ['id' => 'foo'], ['harold' => 'maude']),
++          'first-uuid' => new SectionComponent('first-uuid', 'content', ['id' => 'foo'], ['harold' => 'maude'], ['layout_builder_defaults_test' => ['harold' => 'kumar']]),
+         ],
+         ['layout_builder_defaults_test' => ['which_party' => 'third']]
+       ),

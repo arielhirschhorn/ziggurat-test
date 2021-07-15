@@ -1,0 +1,100 @@
+{
+    "name": "ziggurat-distro/ziggurat-template",
+    "description": "A Drupal 9 scaffold & template for the Ziggurat profile",
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Oomph, Inc.",
+            "email": "devops@oomphinc.com",
+            "homepage": "https://www.oomphinc.com/"
+        }
+    ],
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://git.drupalcode.org/project/ziggurat.git"
+        },
+        {
+            "type": "composer",
+            "url": "https://packages.drupal.org/8"
+        },
+        {
+            "type": "composer",
+            "url": "https://asset-packagist.org"
+        }
+    ],
+    "require": {
+        "composer/installers": "^1.9",
+        "cweagans/composer-patches": "^1.7",
+        "drupal-composer/preserve-paths": "^0.1.6",
+        "drupal/admin_toolbar": "^2.0",
+        "drupal/config_split": "^1.5",
+        "drupal/core-composer-scaffold": "~9.1.0",
+        "drupal/core-project-message": "~9.1.0",
+        "drupal/core-recommended": "~9.1.0",
+        "drupal/core-vendor-hardening": "~9.1.0",
+        "drupal/ziggurat": "^2.0@beta",
+        "drush/drush": "^10.0",
+        "oomphinc/composer-installers-extender": "^2.0",
+        "zaporylie/composer-drupal-optimizations": "^1.2"
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "sort-packages": true
+    },
+    "scripts": {
+        "post-install-cmd": [
+            "DrupalComposer\\DrupalScaffold\\Plugin::scaffold"
+        ],
+        "post-update-cmd": [
+            "DrupalComposer\\DrupalScaffold\\Plugin::scaffold"
+        ]
+    },
+    "extra": {
+        "installer-types": ["bower-asset", "npm-asset"],
+        "installer-paths": {
+            "web/core": ["type:drupal-core"],
+            "web/libraries/{$name}": [
+                "type:drupal-library",
+                "type:bower-asset",
+                "type:npm-asset"
+            ],
+            "web/modules/contrib/{$name}": ["type:drupal-module"],
+            "web/profiles/contrib/{$name}": ["type:drupal-profile"],
+            "web/themes/contrib/{$name}": ["type:drupal-theme"],
+            "drush/contrib/{$name}": ["type:drupal-drush"]
+        },
+        "patches": {
+            "drupal/core": {
+                "Support third party settings for components within a section": "https://gitlab.com/ziggurat-distro/ziggurat-template/-/raw/main/patches/3015152-tps-5.patch",
+                "Creating a block that uses Ajax adds multiple blocks": "https://www.drupal.org/files/issues/2019-05-04/3042190-3.patch",
+                "Enable wysiwyg editing for inline blocks in layout builder": "https://www.drupal.org/files/issues/2020-05-26/3053881-28.patch",
+                "Allow users to upload images to custom inline blocks in layout builder": "https://www.drupal.org/files/issues/2020-05-27/3047022-39.patch",
+                "Fix getEntityTypeId() on null error in layout builder inline blocks": "https://www.drupal.org/files/issues/2019-06-25/drupal-layout_builder_inline_block_empty_block_error-3049332-8.7.x_0.patch",
+                "Undefined index: label when editing Layout Builder section": "https://www.drupal.org/files/issues/2021-05-03/undefined-index-label-3106460-15.patch",
+                "Callers of LayoutEntityHelperTrait::getEntitySections() do not account for the view mode": "https://www.drupal.org/files/issues/2020-08-27/3008924-rerolled-17.patch",
+                "Custom Node layout override overrides other View modes": "https://www.drupal.org/files/issues/2020-05-28/3064039-10-8.8.x-view-modes.patch"
+            },
+            "drupal/views_bulk_operations": {
+                "Allow a message override for the batch finished method.": "patches/views_bulk_operations/views_bulk_operations-3207304.patch"
+            },
+            "drupal/default_content": {
+                "Add a Normalizer and Denormalizer to support Layout Builder": "https://www.drupal.org/files/issues/2021-04-07/3160146-37.patch"
+            },
+            "drupal/nodeaccess": {
+                "Remove deprecate code": "https://www.drupal.org/files/issues/2020-09-29/3070372-24.patch"
+            },
+            "drupal/draggableviews": {
+                "Not working with Group By feature": "https://gitlab.com/ziggurat-distro/ziggurat-template/-/raw/main/patches/not_working_with_group_by-draggableviews-2867348-26.patch"
+            }
+        },
+        "preserve-paths": [],
+        "drupal-scaffold": {
+            "locations": {
+                "web-root": "web"
+            }
+        }
+    }
+}

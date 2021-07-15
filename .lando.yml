@@ -1,0 +1,26 @@
+name: PROJECT_NAME
+recipe: drupal9
+
+config:
+  php: "7.4"
+  webroot: web
+  xdebug: false
+  database: mariadb
+
+events:
+  # Clear cache after a database import
+  post-db-import:
+    - appserver: cd $LANDO_WEBROOT && drush cache-rebuild --yes
+
+services:
+  appserver:
+    run:
+      - cd $LANDO_MOUNT && composer install
+  nodejs:
+    type: node:12
+
+tooling:
+  node:
+    service: nodejs
+  npm:
+    service: nodejs
