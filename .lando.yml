@@ -1,4 +1,4 @@
-name: PROJECT_NAME
+name: ziggurat-test
 recipe: drupal9
 
 config:
